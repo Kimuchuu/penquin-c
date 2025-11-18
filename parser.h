@@ -11,6 +11,11 @@ typedef struct {
 	String name;
 } Parameter;
 
+typedef struct {
+	List parameters;
+	List statements;
+} Function;
+
 typedef enum {
     AST_NUMBER,
     AST_STRING,
@@ -30,7 +35,7 @@ typedef struct AstNode {
         char operator;
         String string;
 		List arguments;
-		List parameters;
+		Function fn;
     } as;
     struct AstNode *left;
     struct AstNode *right;

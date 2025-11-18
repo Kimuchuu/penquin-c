@@ -12,12 +12,16 @@
 #define DEFINE_CSTRING(name, string) char name[string.length + 1];\
 									 memcpy(name, string.p, string.length);\
 								  	 name[string.length] = '\0';
+#define MALLOC_CSTRING(name, string) char *name = malloc(string.length + 1);\
+									 memcpy(name, string.p, string.length);\
+								  	 name[string.length] = '\0';
 
 static LLVMContextRef context;
 static LLVMBuilderRef builder;
 static LLVMModuleRef module;
 
-Table locals; // single locals, lol rip other functions
+Table *locals;
+Table globals;
 Table types;
 
 static LLVMValueRef parse_node(AstNode *node);
@@ -71,7 +75,13 @@ static LLVMValueRef parse_operator(AstNode *node) {
 static LLVMValueRef parse_variable(AstNode *node) {
 	DEFINE_CSTRING(name, node->as.string)
 
-	LLVMValueRef value_pointer = (LLVMValueRef)table_get(&locals, name);
+	LLVMValueRef value_pointer = NULL;
+	if (locals != NULL) {
+		value_pointer = (LLVMValueRef)table_get(locals, name);
+	}
+	if (value_pointer == NULL) {
+		value_pointer = (LLVMValueRef)table_get(&globals, name);
+	}
 	return LLVMBuildLoad2(
 		builder,
 		LLVMGetAllocatedType(value_pointer),
@@ -87,11 +97,15 @@ static LLVMValueRef parse_assignment(AstNode *node) {
 
 	LLVMValueRef value_node = parse_node(node->right);
 
-	DEFINE_CSTRING(name, node->left->as.string)
+	MALLOC_CSTRING(name, node->left->as.string)
 
 	LLVMValueRef pointer = LLVMBuildAlloca(builder, LLVMTypeOf(value_node), name);
 	LLVMBuildStore(builder, value_node, pointer);
-	table_put(&locals, name, pointer);
+	if (locals != NULL && table_get(locals, name) != NULL || table_get(&globals, name) == NULL) {
+		table_put(locals, name, pointer);
+	} else {
+		table_put(&globals, name, pointer);
+	}
 
 	return value_node;
 }
@@ -99,7 +113,7 @@ static LLVMValueRef parse_assignment(AstNode *node) {
 static LLVMValueRef parse_function_call(AstNode *node) {
 	DEFINE_CSTRING(name, node->left->as.string)
 
-	LLVMValueRef fn = table_get(&locals, name);
+	LLVMValueRef fn = table_get(&globals, name);
 	LLVMTypeRef fn_type = LLVMGlobalGetValueType(fn);
 
 	LLVMValueRef args[node->as.arguments.length];
@@ -111,7 +125,7 @@ static LLVMValueRef parse_function_call(AstNode *node) {
 }
 
 static LLVMValueRef parse_function(AstNode *node) {
-	DEFINE_CSTRING(name, node->left->as.string)
+	MALLOC_CSTRING(name, node->left->as.string)
 
 	LLVMTypeRef return_type = NULL;
 	if (node->right == NULL) {
@@ -121,12 +135,16 @@ static LLVMValueRef parse_function(AstNode *node) {
 		return_type = table_get(&types, return_name);
 	}
 
-	int parameter_count = 0;
+	Table *tmp_locals = locals;
+	Table fn_locals;
+	locals = &fn_locals;
+    table_init(locals);
+
 	LLVMTypeRef *parameters = NULL;
-	if (node->as.parameters.length != 0) {
-		parameters = malloc(sizeof(LLVMTypeRef) * node->as.parameters.length);
-		for (int i = 0; i < node->as.parameters.length; i++) {
-			Parameter parameter = LIST_GET(Parameter, &node->as.parameters, i);
+	if (node->as.fn.parameters.length != 0) {
+		parameters = malloc(sizeof(LLVMTypeRef) * node->as.fn.parameters.length);
+		for (int i = 0; i < node->as.fn.parameters.length; i++) {
+			Parameter parameter = LIST_GET(Parameter, &node->as.fn.parameters, i);
 			DEFINE_CSTRING(type_name, parameter.type)
 			parameters[i] = table_get(&types, type_name);
 			if (parameter.pointer) {
@@ -138,12 +156,36 @@ static LLVMValueRef parse_function(AstNode *node) {
 	LLVMTypeRef fn_type = LLVMFunctionType(
 		return_type,
 		parameters,
-		parameter_count,
+		node->as.fn.parameters.length,
 		0
 	);
     LLVMValueRef fn = LLVMAddFunction(module, name, fn_type);
-	table_put(&locals, name, fn);
+	table_put(&globals, name, fn);
 
+	if (node->as.fn.statements.elements != NULL) {
+		LLVMBasicBlockRef block = LLVMAppendBasicBlockInContext(context, fn, "");
+		LLVMPositionBuilderAtEnd(builder, block);
+
+
+		for (int i = 0; i < node->as.fn.parameters.length; i++) {
+			Parameter parameter = LIST_GET(Parameter, &node->as.fn.parameters, i);
+			MALLOC_CSTRING(param_name, parameter.name)
+			LLVMValueRef param_value = LLVMGetParam(fn, i);
+			LLVMValueRef param_pointer = LLVMBuildAlloca(builder, LLVMTypeOf(param_value), name);
+			LLVMBuildStore(builder, param_value, param_pointer);
+			table_put(locals, param_name, param_pointer);
+		}
+		
+
+		LLVMValueRef exit_code = NULL;
+		for (int i = 0; i < node->as.fn.statements.length; i++) {
+			exit_code = parse_node(LIST_GET(AstNode *, &node->as.fn.statements, i));
+		}
+		LLVMBuildRet(builder, exit_code);
+		LLVMPositionBuilderAtEnd(builder, block);
+	}
+
+	locals = tmp_locals;
 	return fn;
 }
 
@@ -169,16 +211,6 @@ static LLVMValueRef parse_node(AstNode *node) {
 }
 
 void init_builtins() {
-	// LLVMTypeRef param_type = LLVMPointerType(LLVMInt8TypeInContext(context), 0);
-	// LLVMTypeRef fn_type = LLVMFunctionType(
-	// 	LLVMInt32TypeInContext(context),
-	// 	&param_type,
-	// 	1,
-	// 	0
-	// );
-	// LLVMValueRef fn = LLVMAddFunction(module, "puts", fn_type);
-	// table_put(&locals, "puts", fn);
-
 	// Types
 	table_put(&types, "s1", LLVMInt8TypeInContext(context));
 	table_put(&types, "s2", LLVMInt16TypeInContext(context));
@@ -191,25 +223,14 @@ void compile(List *nodes) {
     builder = LLVMCreateBuilderInContext(context);
     module = LLVMModuleCreateWithNameInContext("toast", context);
 
-    table_init(&locals, sizeof(LLVMValueRef));
-    table_init(&types, sizeof(LLVMTypeRef));
+    table_init(&globals);
+    table_init(&types);
 
 	init_builtins();
 
-    LLVMTypeRef int_type = LLVMInt32TypeInContext(context);
-
-    LLVMTypeRef main_fn_type = LLVMFunctionType(int_type, NULL, 0, 0);
-    LLVMValueRef main_fn = LLVMAddFunction(module, "main", main_fn_type);
-    LLVMBasicBlockRef b1 = LLVMAppendBasicBlockInContext(context, main_fn, "entry");
-
-    LLVMPositionBuilderAtEnd(builder, b1);
-
-    LLVMValueRef exit_code = NULL;
     for (int i = 0; i < nodes->length; i++) {
-        exit_code = parse_node(LIST_GET(AstNode *, nodes, i));
+        parse_node(LIST_GET(AstNode *, nodes, i));
     }
-
-    LLVMBuildRet(builder, exit_code);
 
 	printf("Writing code...\n");
     LLVMPrintModuleToFile(module, "test.ll", NULL);

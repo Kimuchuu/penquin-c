@@ -8,14 +8,10 @@ static int hash(char *key, int max) {
     return *key % max;
 }
 
-void table_init(Table *table, size_t element_size) {
+void table_init(Table *table) {
     table->entries = NULL;
     table->length = 0;
     table->capacity = 0;
-	// Calculate table entry size. So... maybe this is not a good idea?
-	// Alignment problems? Probably not since we just memcpy with offsets.
-	int size = element_size < sizeof(void *) ? sizeof(void *) : element_size;
-	table->element_size = size + sizeof(TableEntry) - sizeof(void *);
 }
 
 void table_put(Table *table, char *key, void *value) {
@@ -23,14 +19,14 @@ void table_put(Table *table, char *key, void *value) {
         // TODO we probably need to reposition everything since
         // hash function would return different value
         int capacity = table->capacity == 0 ? 8 : table->capacity * 2;
-        TableEntry *mem = (TableEntry *)realloc(table->entries, capacity * table->element_size);
+        TableEntry *mem = (TableEntry *)realloc(table->entries, capacity * sizeof(TableEntry));
         if (mem == NULL) {
             fprintf(stderr, "Unable to allocate memory for table\n");
             exit(1);
         }
 
         // Zero out the newly allocated space
-        memset(mem + table->capacity, 0, (capacity - table->capacity) * table->element_size);
+        memset(mem + table->capacity, 0, (capacity - table->capacity) * sizeof(TableEntry));
 
         table->capacity = capacity;
         table->entries = mem;
@@ -59,12 +55,3 @@ void *table_get(Table *table, char *key) {
     return entry.element;
 }
 
-// int main() {
-//     Table tbl;
-//     table_init(&tbl, sizeof(char *));
-//     table_put(&tbl, "1", "Hello");
-//     table_put(&tbl, "2", "World");
-//     char *hmm = (char *)table_get(&tbl, "1");
-//     printf("what's this: %s\n", hmm);
-//     return 0;
-// }

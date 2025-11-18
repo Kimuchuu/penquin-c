@@ -41,6 +41,7 @@ const char *token_type_to_string(enum TokenType type) {
         CASE_TOKEN(NUMBER);
         CASE_TOKEN(STRING);
         CASE_TOKEN(IDENTIFIER);
+    	CASE_TOKEN(FUN);
 
         CASE_TOKEN(ERROR);
         CASE_TOKEN(EOF);

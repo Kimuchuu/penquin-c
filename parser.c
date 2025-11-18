@@ -13,6 +13,9 @@ List    *tokens;
 Token   *current_token;
 AstNode *current_node;
 
+static AstNode *parse_expression();
+static AstNode *parse_statement();
+
 static void print_tree(AstNode *node) {
     if (node == NULL) {
         return;
@@ -56,7 +59,15 @@ static void print_tree(AstNode *node) {
         case AST_FUNCTION:
             printf("(fn:");
 			print_tree(node->left);
-			// TODO: print parameters
+			List *parameters = &node->as.fn.parameters;
+			Parameter parameter;
+			for (int i = 0; i < parameters->length; i++) {
+				parameter = LIST_GET(Parameter, parameters, i);
+				char str[parameter.type.length + 1];
+				str[parameter.type.length] = '\0';
+				memcpy(str, parameter.type.p, parameter.type.length);
+				printf(" %s", str);
+			}
             printf(")");
             break;
     }
@@ -134,7 +145,6 @@ static AstNode *parse_primary() {
     }
 }
 
-static AstNode *parse_expression();
 static AstNode *parse_call() {
     AstNode *primary = parse_primary();
 	if (primary->type == AST_VARIABLE && current_token->type == TOKEN_LEFT_PAREN) {
@@ -224,8 +234,10 @@ static AstNode *parse_function() {
 		current_token++;
 
 		consume(TOKEN_LEFT_PAREN);
+
+		// Parameters
 		if (current_token->type != TOKEN_RIGHT_PAREN) {
-			list_init(&fn_node->as.parameters, sizeof(Parameter));
+			list_init(&fn_node->as.fn.parameters, sizeof(Parameter));
 			
 			Parameter parameter;
 			do {
@@ -248,13 +260,14 @@ static AstNode *parse_function() {
 				parameter.type.p = current_token->raw;
 				parameter.type.length = current_token->length;
 				current_token++;
-				list_add(&fn_node->as.parameters, &parameter);
+				list_add(&fn_node->as.fn.parameters, &parameter);
 			} while (consume_if(TOKEN_COMMA));
 		}
 
 
 		consume(TOKEN_RIGHT_PAREN);
 
+		// Type
 		if (current_token->type == TOKEN_COLON) {
 			current_token++;
 			if (current_token->type != TOKEN_IDENTIFIER) {
@@ -270,7 +283,19 @@ static AstNode *parse_function() {
 			current_token++;
 		}
 
-		consume(TOKEN_SEMICOLON);
+		if (current_token->type == TOKEN_LEFT_BRACE) {
+			current_token++;
+			list_init(&fn_node->as.fn.statements, sizeof(AstNode *));
+			while (current_token->type != TOKEN_RIGHT_BRACE && (current_token - (Token *)tokens->elements) < tokens->length) {
+				AstNode *statement = parse_statement();
+				list_add(&fn_node->as.fn.statements, &statement);
+			}
+			consume(TOKEN_RIGHT_BRACE);
+		} else {
+			fn_node->as.fn.statements.elements = NULL;
+			consume(TOKEN_SEMICOLON);
+		}
+
 		return fn_node;
 	}
 	return parse_expression_statement();
