@@ -4,8 +4,13 @@
 #include "table.h"
 
 static int hash(char *key, int max) {
-    // TODO: Add true hash function from online
-    return *key % max;
+	unsigned int len = strlen(key);
+	unsigned int hash = 2166136261u;
+	for (int i = 0; i < len; i++) {
+		hash = hash * 16777619u;
+		hash = hash ^ key[i];
+	}
+    return hash % max;
 }
 
 void table_init(Table *table) {
@@ -16,8 +21,13 @@ void table_init(Table *table) {
 
 void table_put(Table *table, char *key, void *value) {
     if (table->length + 1 > table->capacity) {
-        // TODO we probably need to reposition everything since
-        // hash function would return different value
+		if (table->capacity	> 0) {
+			// TODO we probably need to reposition everything since
+			// hash function would return different value
+			fprintf(stderr, "Exceeded max table capacity. Full rebuild required.\n");
+			exit(1);
+		}
+	  
         int capacity = table->capacity == 0 ? 8 : table->capacity * 2;
         TableEntry *mem = (TableEntry *)realloc(table->entries, capacity * sizeof(TableEntry));
         if (mem == NULL) {
@@ -32,11 +42,15 @@ void table_put(Table *table, char *key, void *value) {
         table->entries = mem;
     }
 
-    // TODO: Handle length
     int i = hash(key, table->capacity);
 	while (table->entries[i].key != NULL && strcmp(key, table->entries[i].key) != 0) {
 		i = (i + 1) % (table->capacity - 1);
 	}
+
+	if (table->entries[i].key == NULL) {
+		table->length++;
+	}
+	
     table->entries[i].key = key;
     table->entries[i].element = value;
 }
