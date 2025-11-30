@@ -44,7 +44,7 @@ void table_put(Table *table, char *key, void *value) {
 
     int i = hash(key, table->capacity);
 	while (table->entries[i].key != NULL && strcmp(key, table->entries[i].key) != 0) {
-		i = (i + 1) % (table->capacity - 1);
+		i = (i + 1) % table->capacity;
 	}
 
 	if (table->entries[i].key == NULL) {
@@ -62,7 +62,7 @@ void *table_get(Table *table, char *key) {
     int i = hash(key, table->capacity);
 	int start_i = i;
 	while (table->entries[i].key == NULL || strcmp(table->entries[i].key, key) != 0) {
-		i = (i + 1) % (table->capacity - 1);
+		i = (i + 1) % table->capacity;
 		if (i == start_i) return NULL;
 	}
     TableEntry entry = table->entries[i];
