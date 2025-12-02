@@ -26,6 +26,8 @@ typedef enum {
     AST_VARIABLE,
     AST_FUNCTION,
     AST_WHILE,
+    AST_IF,
+    AST_BLOCK,
 
     AST_OPERATOR,
     AST_ASSIGNMENT,
@@ -42,6 +44,7 @@ typedef struct AstNode {
 		List arguments;
 		Block block;
 		Function fn;
+		struct AstNode *condition;
     } as;
     struct AstNode *left;
     struct AstNode *right;

@@ -73,13 +73,29 @@ static void print_tree(AstNode *node) {
             break;
         case AST_WHILE:
             printf("(while ");
-			print_tree(node->left);
-			List *statements = &node->as.block.statements;
-			AstNode *statement;
-			for (int i = 0; i < statements->length; i++) {
-				statement = LIST_GET(AstNode *, statements, i);
-				print_tree(statement);
+            print_tree(node->left);
+            print_tree(node->right);
+            printf(")");
+            break;
+        case AST_IF:
+            printf("(if ");
+            print_tree(node->as.condition);
+			printf("then ");
+            print_tree(node->left);
+			if (node->right != NULL) {
+				printf("else ");
+				print_tree(node->left);
 			}
+            printf(")");
+            break;
+        case AST_BLOCK:
+            printf("(");
+        		List *statements = &node->as.block.statements;
+        		AstNode *statement;
+        		for (int i = 0; i < statements->length; i++) {
+        				statement = LIST_GET(AstNode *, statements, i);
+        				print_tree(statement);
+        		}
             printf(")");
             break;
     }
@@ -228,113 +244,146 @@ static AstNode *parse_expression_statement() {
     return expression;
 }
 
-static AstNode *parse_while_statement() {
-	if (current_token->type == TOKEN_WHILE) {
-		AstNode *while_node = create_node(AST_WHILE);
+static AstNode *parse_block();
+
+static AstNode *parse_if_statement() {
+	AstNode *if_node = create_node(AST_IF);
+	current_token++;
+
+	if_node->as.condition = parse_expression();
+	if_node->left = parse_block();
+	if (current_token->type == TOKEN_ELSE) {
 		current_token++;
-
-		AstNode *expr = parse_expression();
-		while_node->left = expr;
-
-		consume(TOKEN_LEFT_BRACE);
-		list_init(&while_node->as.block.statements, sizeof(AstNode *));
-		while (current_token->type != TOKEN_RIGHT_BRACE && (current_token - (Token *)tokens->elements) < tokens->length) {
-			AstNode *statement = parse_statement();
-			list_add(&while_node->as.block.statements, &statement);
-		}
-		consume(TOKEN_RIGHT_BRACE);
-		return while_node;
+		if_node->right = parse_statement();
 	}
-	return parse_expression_statement();
+	
+	return if_node;
+}
+
+static AstNode *parse_while_statement() {
+	AstNode *while_node = create_node(AST_WHILE);
+	current_token++;
+	while_node->left = parse_expression();
+	while_node->right = parse_block();
+	return while_node;
+}
+
+static AstNode *parse_statement() {
+	switch (current_token->type) {
+	case TOKEN_WHILE:
+		return parse_while_statement();
+	case TOKEN_IF:
+		return parse_if_statement();
+	case TOKEN_LEFT_BRACE:
+		return parse_block();
+	default:
+		return parse_expression_statement();
+	}
+}
+
+static AstNode *parse_block() {
+	consume(TOKEN_LEFT_BRACE);
+	AstNode *block_node = create_node(AST_BLOCK);
+	
+	list_init(&block_node->as.block.statements, sizeof(AstNode *));
+	while (current_token->type != TOKEN_RIGHT_BRACE && (current_token - (Token *)tokens->elements) < tokens->length) {
+		AstNode *statement = parse_statement();
+		list_add(&block_node->as.block.statements, &statement);
+	}
+
+	consume(TOKEN_RIGHT_BRACE);
+	return block_node;
 }
 
 static AstNode *parse_function() {
-	if (current_token->type == TOKEN_FUN) {
-		AstNode *fn_node = create_node(AST_FUNCTION);
-		current_token++;
-		if (current_token->type != TOKEN_IDENTIFIER) {
-			fprintf(stderr, "Epic fail, expected identifier but got: %s.\n",
-					token_type_to_string(current_token->type));
-			exit(1);
-		}
+	AstNode *fn_node = create_node(AST_FUNCTION);
+	current_token++;
+	if (current_token->type != TOKEN_IDENTIFIER) {
+		fprintf(stderr, "Epic fail, expected identifier but got: %s.\n",
+				token_type_to_string(current_token->type));
+		exit(1);
+	}
 
 		
-		AstNode *identifier_node = create_variable();
-		identifier_node->as.string.p = current_token->raw;
-		identifier_node->as.string.length = current_token->length;
-		fn_node->left = identifier_node;
-		current_token++;
+	AstNode *identifier_node = create_variable();
+	identifier_node->as.string.p = current_token->raw;
+	identifier_node->as.string.length = current_token->length;
+	fn_node->left = identifier_node;
+	current_token++;
 
-		consume(TOKEN_LEFT_PAREN);
+	consume(TOKEN_LEFT_PAREN);
 
-		// Parameters
-		if (current_token->type != TOKEN_RIGHT_PAREN) {
-			list_init(&fn_node->as.fn.parameters, sizeof(Parameter));
+	// Parameters
+	if (current_token->type != TOKEN_RIGHT_PAREN) {
+		list_init(&fn_node->as.fn.parameters, sizeof(Parameter));
 			
-			Parameter parameter;
-			do {
-				if (current_token->type != TOKEN_IDENTIFIER) {
-					fprintf(stderr, "Epic fail, expected identifier (type) but got: %s.\n",
-			 				token_type_to_string(current_token->type));
-					exit(1);
-				}
-				parameter.name.p = current_token->raw;
-				parameter.name.length = current_token->length;
-				current_token++;
-				consume(TOKEN_COLON);
-
-				parameter.pointer = consume_if(TOKEN_STAR);
-				if (current_token->type != TOKEN_IDENTIFIER) {
-					fprintf(stderr, "Epic fail, expected identifier (name) but got: %s.\n",
-			 				token_type_to_string(current_token->type));
-					exit(1);
-				}
-				parameter.type.p = current_token->raw;
-				parameter.type.length = current_token->length;
-				current_token++;
-				list_add(&fn_node->as.fn.parameters, &parameter);
-			} while (consume_if(TOKEN_COMMA));
-		}
-
-
-		consume(TOKEN_RIGHT_PAREN);
-
-		// Type
-		if (current_token->type == TOKEN_COLON) {
-			current_token++;
+		Parameter parameter;
+		do {
 			if (current_token->type != TOKEN_IDENTIFIER) {
 				fprintf(stderr, "Epic fail, expected identifier (type) but got: %s.\n",
 						token_type_to_string(current_token->type));
 				exit(1);
 			}
-
-			AstNode *type_node = create_variable();
-			type_node->as.string.p = current_token->raw;
-			type_node->as.string.length = current_token->length;
-			fn_node->right = type_node;
+			parameter.name.p = current_token->raw;
+			parameter.name.length = current_token->length;
 			current_token++;
-		}
+			consume(TOKEN_COLON);
 
-		if (current_token->type == TOKEN_LEFT_BRACE) {
-			current_token++;
-			list_init(&fn_node->as.fn.statements, sizeof(AstNode *));
-			while (current_token->type != TOKEN_RIGHT_BRACE && (current_token - (Token *)tokens->elements) < tokens->length) {
-				AstNode *statement = parse_statement();
-				list_add(&fn_node->as.fn.statements, &statement);
+			parameter.pointer = consume_if(TOKEN_STAR);
+			if (current_token->type != TOKEN_IDENTIFIER) {
+				fprintf(stderr, "Epic fail, expected identifier (name) but got: %s.\n",
+						token_type_to_string(current_token->type));
+				exit(1);
 			}
-			consume(TOKEN_RIGHT_BRACE);
-		} else {
-			fn_node->as.fn.statements.elements = NULL;
-			consume(TOKEN_SEMICOLON);
+			parameter.type.p = current_token->raw;
+			parameter.type.length = current_token->length;
+			current_token++;
+			list_add(&fn_node->as.fn.parameters, &parameter);
+		} while (consume_if(TOKEN_COMMA));
+	}
+
+
+	consume(TOKEN_RIGHT_PAREN);
+
+	// Type
+	if (current_token->type == TOKEN_COLON) {
+		current_token++;
+		if (current_token->type != TOKEN_IDENTIFIER) {
+			fprintf(stderr, "Epic fail, expected identifier (type) but got: %s.\n",
+					token_type_to_string(current_token->type));
+			exit(1);
 		}
 
-		return fn_node;
+		AstNode *type_node = create_variable();
+		type_node->as.string.p = current_token->raw;
+		type_node->as.string.length = current_token->length;
+		fn_node->right = type_node;
+		current_token++;
 	}
-	return parse_while_statement();
+
+	if (current_token->type == TOKEN_LEFT_BRACE) {
+		current_token++;
+		list_init(&fn_node->as.fn.statements, sizeof(AstNode *));
+		while (current_token->type != TOKEN_RIGHT_BRACE && (current_token - (Token *)tokens->elements) < tokens->length) {
+			AstNode *statement = parse_statement();
+			list_add(&fn_node->as.fn.statements, &statement);
+		}
+		consume(TOKEN_RIGHT_BRACE);
+	} else {
+		fn_node->as.fn.statements.elements = NULL;
+		consume(TOKEN_SEMICOLON);
+	}
+
+	return fn_node;
 }
 
-static AstNode *parse_statement() {
-    return parse_function();
+static AstNode *parse_declaration() {
+	switch (current_token->type) {
+	case TOKEN_FUN:
+		return parse_function();
+	default:
+		return parse_statement();
+	}
 }
 
 void parse(List *t, List *nodes) {
@@ -343,7 +392,7 @@ void parse(List *t, List *nodes) {
 
     AstNode *expression;
     while (current_token->type != TOKEN_EOF && (current_token - (Token *)tokens->elements) < tokens->length) {
-        expression = parse_statement();
+        expression = parse_declaration();
         print_tree(expression);
     	putchar('\n');
     	list_add(nodes, &expression);
