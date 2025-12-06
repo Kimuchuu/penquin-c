@@ -17,6 +17,7 @@ typedef struct {
 
 Scanner scanner;
 List *list;
+static enum TokenType prev_token_type;
 
 
 const char *token_type_to_string(enum TokenType type) {
@@ -106,7 +107,24 @@ static void scan_token() {
     token.col = scanner.col++;
     token.raw = scanner.source + start;
 
-    switch (c) {
+	if (isalpha(c) || c == '_') {
+		scan_identifier();
+		int len = scanner.current - start;
+		if (len == 2 && strncmp(token.raw, "if", 2) == 0) {
+			token.type = TOKEN_IF;
+		} else if (len == 3 && strncmp(token.raw, "fun", 3) == 0) {
+			token.type = TOKEN_FUN;
+		} else if (len == 4 && strncmp(token.raw, "else", 4) == 0) {
+			token.type = TOKEN_ELSE;
+		} else if (len == 5 && strncmp(token.raw, "while", 5) == 0) {
+			token.type = TOKEN_WHILE;
+		} else {
+			token.type = TOKEN_IDENTIFIER;
+		}
+	} else if (isdigit(c) || (c == '-' && isdigit(token.raw[1]) && prev_token_type != TOKEN_NUMBER)) {
+		scan_number();
+		token.type = TOKEN_NUMBER;
+	} else switch (c) {
         case '{':
             token.type = TOKEN_LEFT_BRACE;
             break;
@@ -159,29 +177,11 @@ static void scan_token() {
             token.type = TOKEN_EOF;
             break;
         default:
-            if (isalpha(c) || c == '_') {
-                scan_identifier();
-				int len = scanner.current - start;
-				if (len == 2 && strncmp(token.raw, "if", 2) == 0) {
-					token.type = TOKEN_IF;
-				} else if (len == 3 && strncmp(token.raw, "fun", 3) == 0) {
-					token.type = TOKEN_FUN;
-				} else if (len == 4 && strncmp(token.raw, "else", 4) == 0) {
-					token.type = TOKEN_ELSE;
-				} else if (len == 5 && strncmp(token.raw, "while", 5) == 0) {
-					token.type = TOKEN_WHILE;
-				} else {
-					token.type = TOKEN_IDENTIFIER;
-				}
-            } else if (isdigit(c)) {
-                scan_number();
-                token.type = TOKEN_NUMBER;
-            } else {
-                token.type = TOKEN_ERROR;
-            }
+			token.type = TOKEN_ERROR;
             break;
     }
     token.length = scanner.current - start;
+    prev_token_type = token.type;
     list_add(list, &token);
 }
 
