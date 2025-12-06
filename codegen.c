@@ -8,6 +8,7 @@
 #include "list.h"
 #include "parser.h"
 #include "table.h"
+#include "token.h"
 
 #define DEFINE_CSTRING(name, string) char name[string.length + 1];\
 									 memcpy(name, string.p, string.length);\
@@ -57,15 +58,25 @@ static LLVMValueRef parse_operator(AstNode *node) {
 	LLVMValueRef left = parse_node(node->left);
 	LLVMValueRef right = parse_node(node->right);
 
-	switch (node->as.operator) {
-		case '+':
+	switch (node->as.op) {
+		case TOKEN_PLUS:
 			return LLVMBuildAdd(builder, left, right, "");
-		case '-':
+		case TOKEN_MINUS:
 			return LLVMBuildSub(builder, left, right, "");
-		case '*':
+		case TOKEN_STAR:
 			return LLVMBuildMul(builder, left, right, "");
-		case '/':
+		case TOKEN_SLASH:
 			return LLVMBuildSDiv(builder, left, right, "");
+		case TOKEN_DOUBLE_EQUAL:
+			return LLVMBuildICmp(builder, LLVMIntEQ, left, right, "");
+		case TOKEN_LESS_THAN:
+			return LLVMBuildICmp(builder, LLVMIntSLT, left, right, "");
+		case TOKEN_LESS_THAN_OR_EQUAL:
+			return LLVMBuildICmp(builder, LLVMIntSLE, left, right, "");
+		case TOKEN_GREATER_THAN:
+			return LLVMBuildICmp(builder, LLVMIntSGT, left, right, "");
+		case TOKEN_GREATER_THAN_OR_EQUAL:
+			return LLVMBuildICmp(builder, LLVMIntSGE, left, right, "");
 		default:
 			report_invalid_node("Unexpected identifier in operator node");
 	}

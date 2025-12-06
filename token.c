@@ -36,8 +36,11 @@ const char *token_type_to_string(enum TokenType type) {
         CASE_TOKEN(STAR);
         CASE_TOKEN(SLASH);
         CASE_TOKEN(PERCENT);
+        CASE_TOKEN(DOUBLE_EQUAL);
         CASE_TOKEN(LESS_THAN);
         CASE_TOKEN(GREATER_THAN);
+        CASE_TOKEN(LESS_THAN_OR_EQUAL);
+        CASE_TOKEN(GREATER_THAN_OR_EQUAL);
 
         CASE_TOKEN(NUMBER);
         CASE_TOKEN(STRING);
@@ -147,7 +150,12 @@ static void scan_token() {
             token.type = TOKEN_COMMA;
             break;
         case '=':
-            token.type = TOKEN_EQUAL;
+			if (token.raw[1] == '=') {
+				scanner.current++;
+				token.type = TOKEN_DOUBLE_EQUAL;
+			} else {
+				token.type = TOKEN_EQUAL;
+			}
             break;
         case '+':
             token.type = TOKEN_PLUS;
@@ -165,10 +173,20 @@ static void scan_token() {
             token.type = TOKEN_PERCENT;
             break;
         case '<':
-            token.type = TOKEN_LESS_THAN;
+			if (token.raw[1] == '=') {
+				scanner.current++;
+				token.type = TOKEN_LESS_THAN_OR_EQUAL;
+			} else {
+				token.type = TOKEN_LESS_THAN;
+			}
             break;
         case '>':
-            token.type = TOKEN_GREATER_THAN;
+			if (token.raw[1] == '=') {
+				scanner.current++;
+				token.type = TOKEN_GREATER_THAN_OR_EQUAL;
+			} else {
+				token.type = TOKEN_GREATER_THAN;
+			}
             break;
         case '"':
             token.type = scan_string() ? TOKEN_STRING : TOKEN_ERROR;

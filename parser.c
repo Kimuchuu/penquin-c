@@ -28,7 +28,7 @@ static void print_tree(AstNode *node) {
         case AST_OPERATOR:
             printf("(");
             print_tree(node->left);
-            printf(" %c ", node->as.operator);
+            printf(" %c ", node->as.op);
             print_tree(node->right);
             printf(")");
             break;
@@ -135,7 +135,7 @@ static AstNode *create_number() {
 
 static AstNode *create_operator() {
     AstNode *node = create_node(AST_OPERATOR);
-    node->as.operator = *current_token->raw;
+    node->as.op = current_token->type;
     return node;
 }
 
@@ -221,14 +221,31 @@ static AstNode *parse_term() {
     return factor;
 }
 
+static AstNode *parse_comparison() {
+    AstNode *term = parse_term();
+    if (current_token->type == TOKEN_DOUBLE_EQUAL ||
+		current_token->type == TOKEN_GREATER_THAN || 
+		current_token->type == TOKEN_GREATER_THAN_OR_EQUAL ||
+		current_token->type == TOKEN_LESS_THAN ||
+		current_token->type == TOKEN_LESS_THAN_OR_EQUAL) {
+        AstNode *operator = create_operator();
+        current_token++;
+        operator->left = term;
+        AstNode *other = parse_term();
+        operator->right = other;
+		term = operator;
+	}
+    return term;
+}
+
 static AstNode *parse_assignment() {
-    AstNode *dst = parse_term();
+    AstNode *dst = parse_comparison();
     if (current_token->type == TOKEN_EQUAL) {
         assert(dst->type == AST_VARIABLE);
         AstNode *ass = create_node(AST_ASSIGNMENT);
         current_token++;
         ass->left = dst;
-        ass->right = parse_term();
+        ass->right = parse_comparison();
         dst = ass;
     }
     return dst;

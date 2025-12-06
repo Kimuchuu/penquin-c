@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include "common.h"
 #include "list.h"
+#include "token.h"
 
 typedef struct {
 	bool pointer;
@@ -39,7 +40,7 @@ typedef struct AstNode {
     AstType type;
     union {
         float number;
-        char operator;
+        enum TokenType op;
         String string;
 		List arguments;
 		Block block;
