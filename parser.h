@@ -7,14 +7,26 @@
 #include "token.h"
 
 typedef struct {
+	char *path;
+	List tokens;
+	List nodes;
+} File;
+
+typedef struct {
 	bool pointer;
 	String type;
 	String name;
 } Parameter;
 
 typedef struct {
+	bool pointer;
+	String name;
+} Type;
+
+typedef struct {
 	List parameters;
 	List statements;
+	Type *type;
 } Function;
 
 typedef struct {
@@ -33,6 +45,11 @@ typedef enum {
     AST_OPERATOR,
     AST_ASSIGNMENT,
     AST_FUNCTION_CALL,
+	
+    AST_IMPORT,
+    AST_ACCESSOR,
+
+    AST_FILE,
 } AstType;
 
 
@@ -45,6 +62,7 @@ typedef struct AstNode {
 		List arguments;
 		Block block;
 		Function fn;
+		File file;
 		struct AstNode *condition;
     } as;
     struct AstNode *left;
@@ -53,5 +71,6 @@ typedef struct AstNode {
 
 
 void parse(List *t, List *nodes);
+AstNode *parse_file(char *path, List *t);
 
 #endif

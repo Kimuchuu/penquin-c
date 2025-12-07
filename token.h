@@ -9,6 +9,7 @@ enum TokenType {
     TOKEN_LEFT_PAREN,
     TOKEN_RIGHT_PAREN,
     TOKEN_COLON,
+    TOKEN_DOUBLE_COLON,
     TOKEN_SEMICOLON,
     TOKEN_COMMA,
 
@@ -29,6 +30,8 @@ enum TokenType {
     TOKEN_IDENTIFIER,
     TOKEN_ERROR,
     TOKEN_EOF,
+
+	TOKEN_IMPORT,
 
     TOKEN_FUN,
     TOKEN_WHILE,

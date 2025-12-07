@@ -27,6 +27,7 @@ const char *token_type_to_string(enum TokenType type) {
         CASE_TOKEN(LEFT_PAREN);
         CASE_TOKEN(RIGHT_PAREN);
         CASE_TOKEN(COLON);
+        CASE_TOKEN(DOUBLE_COLON);
         CASE_TOKEN(SEMICOLON);
         CASE_TOKEN(COMMA);
 
@@ -49,6 +50,8 @@ const char *token_type_to_string(enum TokenType type) {
     	CASE_TOKEN(WHILE);
     	CASE_TOKEN(IF);
     	CASE_TOKEN(ELSE);
+
+		CASE_TOKEN(IMPORT);
 
         CASE_TOKEN(ERROR);
         CASE_TOKEN(EOF);
@@ -121,6 +124,8 @@ static void scan_token() {
 			token.type = TOKEN_ELSE;
 		} else if (len == 5 && strncmp(token.raw, "while", 5) == 0) {
 			token.type = TOKEN_WHILE;
+		} else if (len == 6 && strncmp(token.raw, "import", 6) == 0) {
+			token.type = TOKEN_IMPORT;
 		} else {
 			token.type = TOKEN_IDENTIFIER;
 		}
@@ -141,7 +146,12 @@ static void scan_token() {
             token.type = TOKEN_RIGHT_PAREN;
             break;
         case ':':
-            token.type = TOKEN_COLON;
+			if (token.raw[1] == ':') {
+				scanner.current++;
+				token.type = TOKEN_DOUBLE_COLON;
+			} else {
+				token.type = TOKEN_COLON;
+			}
             break;
         case ';':
             token.type = TOKEN_SEMICOLON;

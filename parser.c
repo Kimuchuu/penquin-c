@@ -7,9 +7,6 @@
 #include "list.h"
 #include "token.h"
 
-#define ALLOCATE(value) malloc(sizeof(value))
-
-
 List    *tokens;
 Token   *current_token;
 AstNode *current_node;
@@ -40,18 +37,33 @@ static void print_tree(AstNode *node) {
             printf("%s", str);
             break;
         }
-        case AST_ASSIGNMENT:
+        case AST_ACCESSOR:
+            printf("(");
+            print_tree(node->left);
+            printf("::");
+            print_tree(node->right);
+            printf(")");
+            break;
+	    case AST_ASSIGNMENT:
             printf("(");
             print_tree(node->left);
             printf(" = ");
             print_tree(node->right);
             printf(")");
             break;
+        case AST_FILE:
+            printf("(%s\n", node->as.file.path);
+			List *nodes = &node->as.file.nodes;
+			for (int i = 0; i < nodes->length; i++) {
+				print_tree(LIST_GET(AstNode *, nodes, i));
+			}
+            printf(")");
+            break;
         case AST_FUNCTION_CALL:
             printf("(");
             print_tree(node->left);
 			List *arguments = &node->as.arguments;
-			for (int i = 0; i < node->as.arguments.length; i++) {
+			for (int i = 0; i < arguments->length; i++) {
 				printf(" ");
 				print_tree(LIST_GET(AstNode *, arguments, i));
 			}
@@ -69,6 +81,11 @@ static void print_tree(AstNode *node) {
 				memcpy(str, parameter.type.p, parameter.type.length);
 				printf(" %s", str);
 			}
+            printf(")");
+            break;
+	    case AST_IMPORT:
+            printf("(import ");
+            print_tree(node->left);
             printf(")");
             break;
         case AST_WHILE:
@@ -117,9 +134,8 @@ static char consume_if(enum TokenType type) {
 	return 1;
 }
 
-
 static inline AstNode *create_node(AstType type) {
-    AstNode *node = ALLOCATE(AstNode);
+    AstNode *node = malloc(sizeof(AstNode));
     node->type = type;
     node->left = NULL;
     node->right = NULL;
@@ -173,13 +189,31 @@ static AstNode *parse_primary() {
     }
 }
 
+static AstNode *parse_accessor() {
+	AstNode *primary = parse_primary();
+	if (primary->type == AST_VARIABLE && current_token->type == TOKEN_DOUBLE_COLON) {
+		current_token++;
+		if (current_token->type != TOKEN_IDENTIFIER) {
+			fprintf(stderr, "Epic fail, expected identifier but got: %s.\n",
+					token_type_to_string(current_token->type));
+			exit(1);
+		}
+		AstNode *accessor_node = create_node(AST_ACCESSOR);
+		accessor_node->left = primary;
+		accessor_node->right = create_variable();
+		current_token++;
+		primary = accessor_node;
+	}
+	return primary;
+}
+
 static AstNode *parse_call() {
-    AstNode *primary = parse_primary();
-	if (primary->type == AST_VARIABLE && current_token->type == TOKEN_LEFT_PAREN) {
+    AstNode *accessor = parse_accessor();
+	if ((accessor->type == AST_VARIABLE || accessor->type == AST_ACCESSOR) && current_token->type == TOKEN_LEFT_PAREN) {
 		current_token++;
 		AstNode *call = create_node(AST_FUNCTION_CALL);
-		call->left = primary;
-		primary = call;
+		call->left = accessor;
+		accessor = call;
 		list_init(&call->as.arguments, sizeof(AstNode *));
 		if (current_token->type != TOKEN_RIGHT_PAREN) {
 			AstNode *argument = parse_expression();
@@ -192,7 +226,7 @@ static AstNode *parse_call() {
 		}
 		consume(TOKEN_RIGHT_PAREN);
 	}
-    return primary;
+    return accessor;
 }
 
 static AstNode *parse_factor() {
@@ -357,25 +391,30 @@ static AstNode *parse_function() {
 			current_token++;
 			list_add(&fn_node->as.fn.parameters, &parameter);
 		} while (consume_if(TOKEN_COMMA));
-	}
-
+    } else {
+		fn_node->as.fn.parameters.length = 0;
+    }
 
 	consume(TOKEN_RIGHT_PAREN);
 
 	// Type
 	if (current_token->type == TOKEN_COLON) {
 		current_token++;
+		bool pointer = consume_if(TOKEN_STAR);
 		if (current_token->type != TOKEN_IDENTIFIER) {
 			fprintf(stderr, "Epic fail, expected identifier (type) but got: %s.\n",
 					token_type_to_string(current_token->type));
 			exit(1);
 		}
 
-		AstNode *type_node = create_variable();
-		type_node->as.string.p = current_token->raw;
-		type_node->as.string.length = current_token->length;
-		fn_node->right = type_node;
+		Type *type = malloc(sizeof(Type));
+		type->name.p = current_token->raw;
+		type->name.length = current_token->length;
+		type->pointer = pointer;
+		fn_node->as.fn.type = type;
 		current_token++;
+	} else {
+		fn_node->as.fn.type = NULL;
 	}
 
 	if (current_token->type == TOKEN_LEFT_BRACE) {
@@ -394,10 +433,28 @@ static AstNode *parse_function() {
 	return fn_node;
 }
 
+static AstNode *parse_import() {
+	AstNode *import_node = create_node(AST_IMPORT);
+	current_token++;
+	
+	if (current_token->type != TOKEN_STRING) {
+		fprintf(stderr, "Epic fail, expected import path but got: %s.\n",
+				token_type_to_string(current_token->type));
+		exit(1);
+	}
+	
+    import_node->left = create_string();
+	current_token++;
+
+	return import_node;
+}
+
 static AstNode *parse_declaration() {
 	switch (current_token->type) {
 	case TOKEN_FUN:
 		return parse_function();
+	case TOKEN_IMPORT:
+		return parse_import();
 	default:
 		return parse_statement();
 	}
@@ -410,8 +467,20 @@ void parse(List *t, List *nodes) {
     AstNode *expression;
     while (current_token->type != TOKEN_EOF && (current_token - (Token *)tokens->elements) < tokens->length) {
         expression = parse_declaration();
+#ifdef DEBUG
         print_tree(expression);
     	putchar('\n');
+#endif
     	list_add(nodes, &expression);
 	}
+}
+
+AstNode *parse_file(char *path, List *t) {
+	AstNode *file_node = create_node(AST_FILE);
+	file_node->as.file.path = path;
+	file_node->as.file.tokens = *t;
+	list_init(&file_node->as.file.nodes, sizeof(AstNode *));
+
+	parse(&file_node->as.file.tokens, &file_node->as.file.nodes);
+	return file_node;
 }

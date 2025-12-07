@@ -1,21 +1,18 @@
 #include <assert.h>
-#include <llvm-c/Types.h>
+#include <libgen.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <llvm-c/Core.h>
+#include <llvm-c/Object.h>
+#include <llvm-c/TargetMachine.h>
+#include <llvm-c/Target.h>
 #include "codegen.h"
+#include "common.h"
 #include "list.h"
 #include "parser.h"
 #include "table.h"
 #include "token.h"
-
-#define DEFINE_CSTRING(name, string) char name[string.length + 1];\
-									 memcpy(name, string.p, string.length);\
-								  	 name[string.length] = '\0';
-#define MALLOC_CSTRING(name, string) char *name = malloc(string.length + 1);\
-									 memcpy(name, string.p, string.length);\
-								  	 name[string.length] = '\0';
 
 typedef struct Scope {
 	struct Scope *prev;
@@ -27,8 +24,46 @@ static LLVMBuilderRef builder;
 static LLVMModuleRef module;
 static LLVMValueRef *current_function;
 Table types;
+Table *modules;
+Table *imports;
 Scope *current_scope;
-Scope *global_scope;
+Scope global_scope;
+char *module_dir;
+char *module_path;
+bool module_is_entry;
+
+// TODO: Remove this Silly solution
+bool load_variables = true;
+#define SET_LOAD(value) bool tmp_load_variables = load_variables; load_variables = value;
+#define RESTORE_LOAD() load_variables = tmp_load_variables;
+
+char *resolve_module_path(char *dir, String module_name) {
+	int dirlen = strlen(dir);
+	int size = dirlen + 1 + module_name.length + 3 + 1;
+	char *full_path = malloc(size);
+	memcpy(full_path, dir, dirlen);
+	full_path[dirlen] = '/';
+	memcpy(full_path + dirlen + 1, module_name.p, module_name.length);
+	memcpy(full_path + dirlen + 1 + module_name.length, ".pq", 4);
+	return full_path;
+}
+
+static char *resolve_identifier_name(char *path, String name) {
+	int plen = strlen(path);
+	char prefix[plen + 2];
+	memcpy(prefix, path, plen);
+	prefix[plen] = '@';
+	prefix[plen + 1] = '\0';
+	return cstring_concat_String(prefix, name);
+}
+
+static char *resolve_identifier(AstNode *node) {
+	if (module_is_entry) {
+		return String_to_cstring(node->as.string);
+	} else {
+		return resolve_identifier_name(module_path, node->as.string);
+	}
+}
 
 static LLVMValueRef parse_node(AstNode *node);
 
@@ -50,13 +85,8 @@ static LLVMValueRef parse_string(AstNode *node) {
         report_invalid_node("Expected string");
     }
 
-	LLVMValueRef str = LLVMConstStringInContext2(context,
-												 node->as.string.p,
-											  	 node->as.string.length,
-											  	 0);
-	LLVMValueRef pointer = LLVMBuildAlloca(builder, LLVMTypeOf(str), "");
-	LLVMBuildStore(builder, str, pointer);
-	return pointer;
+	char *cstring = String_to_cstring(node->as.string);
+	return LLVMBuildGlobalString(builder, cstring, "");
 }
 
 static LLVMValueRef parse_operator(AstNode *node) {
@@ -89,7 +119,7 @@ static LLVMValueRef parse_operator(AstNode *node) {
 }
 
 static LLVMValueRef parse_variable(AstNode *node) {
-	DEFINE_CSTRING(name, node->as.string)
+	char *name = resolve_identifier(node);
 
 	LLVMValueRef value_pointer = NULL;
 	Scope *scope = current_scope;
@@ -97,12 +127,19 @@ static LLVMValueRef parse_variable(AstNode *node) {
 		value_pointer = (LLVMValueRef)table_get(scope->locals, name);
 		scope = scope->prev;
 	}
-	return LLVMBuildLoad2(
-		builder,
-		LLVMGetAllocatedType(value_pointer),
-		value_pointer,
-		""
-	);
+
+	free(name);
+	
+	if (value_pointer != NULL && load_variables) {
+		return LLVMBuildLoad2(
+			builder,
+			LLVMGetAllocatedType(value_pointer),
+			value_pointer,
+			""
+		);
+	}
+
+	return value_pointer;
 }
 
 static LLVMValueRef parse_assignment(AstNode *node) {
@@ -110,33 +147,34 @@ static LLVMValueRef parse_assignment(AstNode *node) {
 		report_invalid_node("Expected left of assignment to be variable");
 	}
 
+	char *name = resolve_identifier(node->left);
+	LLVMValueRef pointer = parse_node(node->left);
 	LLVMValueRef value_node = parse_node(node->right);
 
-	MALLOC_CSTRING(name, node->left->as.string)
-
-	LLVMValueRef pointer = NULL;
-	Scope *using_scope = NULL;
-	Scope *check_scope = current_scope;
-	while (check_scope != NULL && pointer == NULL) {
-		pointer = (LLVMValueRef)table_get(check_scope->locals, name);
-		check_scope = check_scope->prev;
-		using_scope = check_scope;
-	}
 	if (pointer == NULL) {
 		pointer = LLVMBuildAlloca(builder, LLVMTypeOf(value_node), name);
 		table_put(current_scope->locals, name, pointer);
 	} else {
+		Scope *using_scope = NULL;
+		Scope *check_scope = current_scope;
+		pointer = NULL;
+		while (check_scope != NULL && pointer == NULL) {
+			pointer = (LLVMValueRef)table_get(check_scope->locals, name);
+			check_scope = check_scope->prev;
+			using_scope = check_scope;
+		}
 		table_put(using_scope->locals, name, pointer);
 	}
+
 	LLVMBuildStore(builder, value_node, pointer);
 
 	return value_node;
 }
 
 static LLVMValueRef parse_function_call(AstNode *node) {
-	DEFINE_CSTRING(name, node->left->as.string)
-
-	LLVMValueRef fn = table_get(global_scope->locals, name);
+	SET_LOAD(false)
+	LLVMValueRef fn = parse_node(node->left);
+	RESTORE_LOAD()
 	LLVMTypeRef fn_type = LLVMGlobalGetValueType(fn);
 
 	LLVMValueRef args[node->as.arguments.length];
@@ -147,21 +185,17 @@ static LLVMValueRef parse_function_call(AstNode *node) {
 	return LLVMBuildCall2(builder, fn_type, fn, args, node->as.arguments.length, "");
 }
 
-static LLVMValueRef parse_function(AstNode *node) {
-	MALLOC_CSTRING(name, node->left->as.string)
-
+static LLVMValueRef parse_function_definition(char *name, AstNode *node) {
 	LLVMTypeRef return_type = NULL;
-	if (node->right == NULL) {
+	if (node->as.fn.type == NULL) {
 		return_type = LLVMVoidTypeInContext(context);
 	} else {
-		DEFINE_CSTRING(return_name, node->right->as.string)
+		DEFINE_CSTRING(return_name, node->as.fn.type->name)
 		return_type = table_get(&types, return_name);
+		if (node->as.fn.type->pointer) {
+			return_type = LLVMPointerType(return_type, 0);
+		}
 	}
-
-	Table locals;
-    table_init(&locals);
-	Scope function_scope = { .prev = current_scope, .locals = &locals };
-	current_scope = &function_scope;
 
 	LLVMTypeRef *parameters = NULL;
 	if (node->as.fn.parameters.length != 0) {
@@ -183,9 +217,20 @@ static LLVMValueRef parse_function(AstNode *node) {
 		0
 	);
     LLVMValueRef fn = LLVMAddFunction(module, name, fn_type);
-	current_function = &fn;
-	table_put(global_scope->locals, name, fn);
+	table_put(global_scope.locals, name, fn);
+	return fn;
+}
 
+static LLVMValueRef parse_function(AstNode *node) {
+	char *name = resolve_identifier(node->left);
+
+	Table locals;
+    table_init(&locals);
+	Scope function_scope = { .prev = current_scope, .locals = &locals };
+	current_scope = &function_scope;
+
+	LLVMValueRef fn = parse_function_definition(name, node);
+	current_function = &fn;
 	if (node->as.fn.statements.elements != NULL) {
 		LLVMBasicBlockRef block = LLVMAppendBasicBlockInContext(context, fn, "");
 		LLVMPositionBuilderAtEnd(builder, block);
@@ -193,9 +238,9 @@ static LLVMValueRef parse_function(AstNode *node) {
 
 		for (int i = 0; i < node->as.fn.parameters.length; i++) {
 			Parameter parameter = LIST_GET(Parameter, &node->as.fn.parameters, i);
-			MALLOC_CSTRING(param_name, parameter.name)
+			char *param_name = String_to_cstring(parameter.name);
 			LLVMValueRef param_value = LLVMGetParam(fn, i);
-			LLVMValueRef param_pointer = LLVMBuildAlloca(builder, LLVMTypeOf(param_value), name);
+			LLVMValueRef param_pointer = LLVMBuildAlloca(builder, LLVMTypeOf(param_value), param_name);
 			LLVMBuildStore(builder, param_value, param_pointer);
 			table_put(&locals, param_name, param_pointer);
 		}
@@ -209,6 +254,7 @@ static LLVMValueRef parse_function(AstNode *node) {
 		LLVMPositionBuilderAtEnd(builder, block);
 	}
 
+	current_function = NULL;
 	current_scope = function_scope.prev;
 	return fn;
 }
@@ -275,6 +321,47 @@ static LLVMValueRef parse_block(AstNode *node) {
 	return NULL;
 }
 
+static LLVMValueRef parse_import(AstNode *node) {
+	char *import_path = resolve_module_path(module_dir, node->left->as.string);
+	char *identifier = path_to_name(import_path);
+	AstNode *file_node = table_get(modules, import_path);
+	table_put(imports, identifier, &file_node->as.file);
+	List *import_file_nodes = &file_node->as.file.nodes;
+	for (int i = 0; i < import_file_nodes->length; i++) {
+		AstNode *i_node = LIST_GET(AstNode *, import_file_nodes, i);
+		if (i_node->type == AST_FUNCTION) {
+			char *i_name = resolve_identifier_name(import_path, i_node->left->as.string);
+			parse_function_definition(i_name, i_node);
+		}
+	}
+	return NULL;
+}
+
+static LLVMValueRef parse_accessor(AstNode *node) {
+	char *import_path = String_to_cstring(node->left->as.string);
+	File *file = table_get(imports, import_path);
+
+	char *current_module_path = module_path;
+	bool current_module_is_entry = module_is_entry;
+
+	module_is_entry = false;
+	module_path = file->path;
+	LLVMValueRef result = parse_node(node->right);
+
+	module_is_entry = current_module_is_entry;
+	module_path = current_module_path;
+	return result;
+}
+
+static LLVMValueRef parse_file_node(AstNode *node) {
+	List *nodes = &node->as.file.nodes;
+    for (int i = 0; i < nodes->length; i++) {
+        parse_node(LIST_GET(AstNode *, nodes, i));
+    }
+
+	return NULL;
+}
+
 static LLVMValueRef parse_node(AstNode *node) {
 	switch (node->type) {
 		case AST_OPERATOR:
@@ -287,6 +374,8 @@ static LLVMValueRef parse_node(AstNode *node) {
 			return parse_variable(node);
 		case AST_STRING:
 			return parse_string(node);
+		case AST_FILE:
+			return parse_file_node(node);
 		case AST_FUNCTION_CALL:
 			return parse_function_call(node);
 		case AST_FUNCTION:
@@ -297,40 +386,92 @@ static LLVMValueRef parse_node(AstNode *node) {
 			return parse_if(node);
 		case AST_BLOCK:
 			return parse_block(node);
+		case AST_IMPORT:
+			return parse_import(node);
+		case AST_ACCESSOR:
+			return parse_accessor(node);
 		default:
 			report_invalid_node("Unhandled node types");
     }
+	return NULL; // Will never hit, but just to appease the warning gods
 }
 
-void init_builtins() {
-	// Types
+void compiler_initialize(Table *modules_) {
+    context = LLVMContextCreate();
+	modules = modules_;
+
+	global_scope.prev = NULL;
+	global_scope.locals = malloc(sizeof(Table));
+    table_init(global_scope.locals);
+
+    table_init(&types);
 	table_put(&types, "s1", LLVMInt8TypeInContext(context));
 	table_put(&types, "s2", LLVMInt16TypeInContext(context));
 	table_put(&types, "s4", LLVMInt32TypeInContext(context));
 	table_put(&types, "s8", LLVMInt64TypeInContext(context));
 }
 
-void compile(List *nodes) {
-    context = LLVMContextCreate();
+LLVMModuleRef build_module(AstNode *file_node, char *dir, char *name, bool entry) {
     builder = LLVMCreateBuilderInContext(context);
-    module = LLVMModuleCreateWithNameInContext("toast", context);
+    module = LLVMModuleCreateWithNameInContext(name, context);
+	module_dir = dir;
+	module_path = file_node->as.file.path;
+	module_is_entry = entry;
 
-	Table globals;
-	Scope scope = { .prev = current_scope, .locals = &globals };
-	global_scope = current_scope = &scope;
-    table_init(&globals);
-    table_init(&types);
+	current_scope = &global_scope;
 
-	init_builtins();
+	Table imports_;
+	imports = &imports_;
+    table_init(imports);
 
-    for (int i = 0; i < nodes->length; i++) {
-        parse_node(LIST_GET(AstNode *, nodes, i));
-    }
+	parse_node(file_node);
 
-	printf("Writing code...\n");
-    LLVMPrintModuleToFile(module, "test.ll", NULL);
-	printf("code written to test.ll\n");
-    char *code = LLVMPrintModuleToString(module);
-    printf("code:\n%s", code);
+	LLVMDisposeBuilder(builder);
+	return module;
+}
+
+void compile(LLVMModuleRef module, char *name) {
+#ifdef DEBUG
+	char *code = LLVMPrintModuleToString(module);
+	printf("code:\n\n%s\n", code);
+#endif
+
+	LLVMInitializeAllTargetInfos();
+	LLVMInitializeAllTargets();
+	LLVMInitializeAllTargetMCs();
+	LLVMInitializeAllAsmParsers();
+	LLVMInitializeAllAsmPrinters();
+
+	char object_file_path[256];
+	sprintf(object_file_path, "/tmp/%s.o", name);
+
+	char *err;
+	LLVMBool failed;
+	LLVMTargetRef target_ref;
+
+	const char *target_triple = LLVMGetDefaultTargetTriple();
+	failed = LLVMGetTargetFromTriple(target_triple, &target_ref, &err);
+	if (failed) {
+		printf("LLVM: %s\n", err);
+		exit(1);
+	}
+
+	LLVMTargetMachineOptionsRef target_machine_options_ref = LLVMCreateTargetMachineOptions();
+	LLVMTargetMachineOptionsSetRelocMode(target_machine_options_ref, LLVMRelocPIC);
+	LLVMTargetMachineRef target_machine_ref = LLVMCreateTargetMachineWithOptions(target_ref, target_triple, target_machine_options_ref);
+
+	failed = LLVMTargetMachineEmitToFile(target_machine_ref, module, object_file_path, LLVMObjectFile, &err);
+	if (failed) {
+		printf("LLVM: %s\n", err);
+		exit(1);
+	}
+
+	char cmd[512];
+	sprintf(cmd, "clang %s -o %s", object_file_path, name);
+	int link_result = system(cmd);
+	if (link_result) {
+		printf("Unable to link using clang, command: %s\n", cmd);
+		exit(1);
+	}
 }
 
