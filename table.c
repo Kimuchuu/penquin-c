@@ -69,3 +69,16 @@ void *table_get(Table *table, char *key) {
     return entry.element;
 }
 
+void **table_get_all(Table *table) {
+	if (table->length == 0) {
+		return NULL;
+	}
+	void **all = malloc(sizeof(void *) * table->length);
+	for (int i = 0, n = 0; i < table->capacity; i++) {
+		if (table->entries[i].key != NULL) {
+			all[n++] = table->entries[i].element;
+		}
+	}
+    return all;
+}
+

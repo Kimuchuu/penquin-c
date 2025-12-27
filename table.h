@@ -17,5 +17,6 @@ typedef struct {
 void table_init(Table *table);
 void table_put(Table *table, char *key, void *value);
 void *table_get(Table *table, char *key);
+void **table_get_all(Table *table);
 
 #endif
