@@ -1,0 +1,9 @@
+fun puts(str: *s1): s4;
+fun exit(status: s4);
+
+fun main(): s4 {
+	puts("first test");
+	exit(42);
+	puts("second test");
+	69;
+}

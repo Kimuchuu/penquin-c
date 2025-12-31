@@ -1,0 +1,73 @@
+Some ideas...
+
+==================
+  Struct / Types
+==================
+
+struct MyStruct {
+	test: s8
+	toast: u4
+}
+
+enum MyEnum {
+	X of u4
+	Y of u4
+	Z
+}
+
+=============
+  Functions
+=============
+
+fun my_function(): x {
+
+}
+
+================
+  Conditionals
+================
+
+if this {
+
+} else {
+
+}
+
+u4 ok = match x with {
+	i8 i -> my_function()
+	u4 i -> 42 + i
+}
+
+=========
+  Loops
+=========
+
+for x; x < 3; x++ {
+
+}
+
+each x in xs {
+
+}
+
+while o < 0 {
+
+}
+
+============
+  Modules
+============
+
+Files = Modules
+
+
+import "file"
+import "my/std"
+
+====================
+  Standard library
+====================
+
+== File
+File::read(stdin, 128);
+File::write(stdin, buffer);
